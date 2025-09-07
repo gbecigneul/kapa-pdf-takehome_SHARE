@@ -10,3 +10,8 @@ langchain==0.1.17
 pymupdf4llm==0.0.24
 black==25.1.0
 isort==6.0.1
+python-dotenv==1.0.1
+docling
+markitdown[all]
+marker-pdf
+unstructured[pdf]

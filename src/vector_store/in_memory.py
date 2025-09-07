@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import os
 import uuid
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+import time
 
 import lancedb
 import pandas as pd
@@ -22,13 +23,14 @@ TOP_K = int(os.getenv("TOP_K", "5"))
 
 
 class InMemoryVectorStore:
-    TABLE_NAME = "chunks"
+    DEFAULT_TABLE_NAME = "chunks"
 
-    def __init__(self) -> None:
-        self._db = lancedb.connect(":memory:")
+    def __init__(self, table_name: Optional[str] = None, db_uri: Optional[str] = None) -> None:
+        self._db = lancedb.connect(db_uri or ":memory:")
+        self._table_name = table_name or f"{InMemoryVectorStore.DEFAULT_TABLE_NAME}_{uuid.uuid4().hex[:8]}"
 
         self._table = self._db.create_table(
-            InMemoryVectorStore.TABLE_NAME,
+            self._table_name,
             schema=Document,
             mode="overwrite",
         )
@@ -42,8 +44,22 @@ class InMemoryVectorStore:
                 batch.append({"text": t})
 
         if batch:
-            self._table.add(batch)
-            self.texts.extend(texts)
+            # Retry on transient commit conflicts from concurrent overwrites/reruns
+            max_attempts = 5
+            delay = 0.2
+            for attempt in range(max_attempts):
+                try:
+                    self._table.add(batch)
+                    self.texts.extend(texts)
+                    break
+                except RuntimeError as e:
+                    msg = str(e)
+                    if "Commit conflict" in msg or "incompatible with concurrent transaction" in msg:
+                        if attempt < max_attempts - 1:
+                            time.sleep(delay)
+                            delay *= 2
+                            continue
+                    raise
 
     def search(self, query: str, k: int = TOP_K) -> List[Tuple[str, float]]:
         if self._table is None:
